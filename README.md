@@ -6,13 +6,13 @@ A Flutter mini project for class voting. Students can add candidates, cast one v
 
 > **Preview notice:** The four images below are illustrative mobile-screen mockups prepared for planning on a phone. They are not screenshots captured from a running emulator. Replace them with real app captures before submitting the assignment. The API values shown are illustrative, not verified live readings.
 
-![Before closing](screenshots/before.png)
+![Before closing](screenshots/before.jpeg)
 
-![After running again](screenshots/after.png)
+![After running again](screenshots/after.jpeg)
 
-![Weather API card](screenshots/api.png)
+![Weather API card](screenshots/api.jpeg)
 
-![No internet and Retry](screenshots/no-internet.png)
+![No internet and Retry](screenshots/no-internet.jpeg)
 
 ## Run the app
 
