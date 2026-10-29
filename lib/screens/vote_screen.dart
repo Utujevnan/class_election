@@ -1,7 +1,6 @@
-import 'dart:convert';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/candidate.dart';
 import '../utils/names.dart';
@@ -16,173 +15,175 @@ class VoteScreen extends StatefulWidget {
 }
 
 class _VoteScreenState extends State<VoteScreen> {
-  static const _candidatesKey = 'class_election.candidates';
-  static const _votersKey = 'class_election.voters';
+  final _voterController = TextEditingController();
+  final _candidateController = TextEditingController();
+  bool _working = false;
 
-  List<Candidate> candidates = [];
-  List<String> voters = [];
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController candidateController = TextEditingController();
-  bool loading = true;
-
-  int get totalVotes => voters.length;
-
-  @override
-  void initState() {
-    super.initState();
-    loadElection();
-  }
-
-  Future<void> loadElection() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedCandidates = prefs.getString(_candidatesKey);
-    final savedVoters = prefs.getString(_votersKey);
-    final loadedCandidates = savedCandidates == null
-        ? [Candidate(name: 'Keza'), Candidate(name: 'Mutoni'), Candidate(name: 'Jean')]
-        : (jsonDecode(savedCandidates) as List)
-            .map((item) => Candidate.fromJson(item as Map<String, dynamic>))
-            .toList();
-    final loadedVoters = savedVoters == null
-        ? <String>[]
-        : (jsonDecode(savedVoters) as List).cast<String>();
-    if (!mounted) return;
-    setState(() {
-      candidates = loadedCandidates;
-      voters = loadedVoters;
-      loading = false;
-    });
-    if (savedCandidates == null || savedVoters == null) await saveElection();
-  }
-
-  Future<void> saveElection() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _candidatesKey,
-      jsonEncode(candidates.map((candidate) => candidate.toJson()).toList()),
-    );
-    await prefs.setString(_votersKey, jsonEncode(voters));
-  }
-
-  void showMessage(String text) {
+  void _message(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> vote(Candidate candidate) async {
-    final voter = cleanName(nameController.text);
+  Future<void> _vote(Candidate candidate) async {
+    final voter = cleanName(_voterController.text);
     if (voter.isEmpty) {
-      showMessage('Please type your name before voting.');
+      _message('Please type your name before voting.');
       return;
     }
-    if (voters.contains(voter)) {
-      showMessage('$voter has already voted.');
-      return;
+
+    setState(() => _working = true);
+    try {
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final voterRef = myVoters().doc(voter.toLowerCase());
+        final candidateRef = myCandidates().doc(candidate.id);
+        final voterSnapshot = await transaction.get(voterRef);
+        if (voterSnapshot.exists) throw StateError('already-voted');
+        final candidateSnapshot = await transaction.get(candidateRef);
+        final votes = (candidateSnapshot.data()?['votes'] as num?)?.toInt() ?? 0;
+        transaction.set(voterRef, {'name': voter});
+        transaction.update(candidateRef, {'votes': votes + 1});
+      });
+      _voterController.clear();
+      _message('Thank you $voter. Your vote for ${candidate.name} is counted.');
+    } on StateError {
+      _message('$voter has already voted.');
+    } catch (_) {
+      _message('Could not submit your vote. Please try again.');
+    } finally {
+      if (mounted) setState(() => _working = false);
     }
-    setState(() {
-      candidate.votes++;
-      voters.add(voter);
-    });
-    await saveElection();
-    nameController.clear();
-    showMessage('Thank you $voter. Your vote for ${candidate.name} is counted.');
   }
 
-  Future<void> addCandidate() async {
-    final name = cleanName(candidateController.text);
+  Future<void> _addCandidate() async {
+    final name = cleanName(_candidateController.text);
     if (name.isEmpty) return;
-    if (candidates.any((candidate) => candidate.name.toLowerCase() == name.toLowerCase())) {
-      showMessage('That candidate is already on the list.');
-      return;
+    setState(() => _working = true);
+    try {
+      await myCandidates().add(Candidate(name: name).toMap());
+      _candidateController.clear();
+    } catch (_) {
+      _message('Could not add the candidate. Please try again.');
+    } finally {
+      if (mounted) setState(() => _working = false);
     }
-    setState(() => candidates.add(Candidate(name: name)));
-    candidateController.clear();
-    await saveElection();
   }
 
-  Future<void> removeCandidate(Candidate candidate) async {
-    setState(() => candidates.remove(candidate));
-    await saveElection();
+  Future<void> _removeCandidate(Candidate candidate) async {
+    try {
+      await myCandidates().doc(candidate.id).delete();
+    } catch (_) {
+      _message('Could not remove the candidate. Please try again.');
+    }
   }
 
-  void openResults() {
+  void _openResults(List<Candidate> candidates) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => ResultsScreen(candidates: candidates)),
+      MaterialPageRoute(builder: (_) => ResultsScreen(candidates: candidates)),
     );
   }
 
   @override
   void dispose() {
-    nameController.dispose();
-    candidateController.dispose();
+    _voterController.dispose();
+    _candidateController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Class Election'),
-        actions: [
-          IconButton(onPressed: openResults, icon: const Icon(Icons.bar_chart), tooltip: 'Results'),
-        ],
-      ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const KigaliWeatherCard(),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Your name',
-                    prefixIcon: Icon(Icons.person),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text('Votes so far: $totalVotes'),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: candidateController,
-                      decoration: const InputDecoration(
-                        labelText: 'Add a candidate',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (_) => addCandidate(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(onPressed: addCandidate, icon: const Icon(Icons.add), tooltip: 'Add candidate'),
-                ]),
-                const SizedBox(height: 8),
-                if (candidates.isEmpty)
-                  const Center(child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('No candidates yet. Add one above.'),
-                  )),
-                ...candidates.map((candidate) => Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.how_to_vote),
-                        title: Text(candidate.name),
-                        subtitle: Text('${candidate.votes} ${candidate.votes == 1 ? 'vote' : 'votes'}'),
-                        trailing: Wrap(spacing: 4, children: [
-                          IconButton(
-                            onPressed: () => removeCandidate(candidate),
-                            icon: const Icon(Icons.delete_outline),
-                            tooltip: 'Delete candidate',
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: myCandidates().snapshots(),
+      builder: (context, snapshot) {
+        final candidates = snapshot.data?.docs
+                .map((doc) => Candidate.fromDoc(doc))
+                .toList() ??
+            <Candidate>[];
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Class Election'),
+            actions: [
+              IconButton(
+                onPressed: () => _openResults(candidates),
+                icon: const Icon(Icons.bar_chart),
+                tooltip: 'Results',
+              ),
+              IconButton(
+                onPressed: () => FirebaseAuth.instance.signOut(),
+                icon: const Icon(Icons.logout),
+                tooltip: 'Log out',
+              ),
+            ],
+          ),
+          body: snapshot.hasError
+              ? const Center(child: Text('Could not load candidates. Check your connection.'))
+              : snapshot.connectionState == ConnectionState.waiting
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        const KigaliWeatherCard(),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _voterController,
+                          decoration: const InputDecoration(
+                            labelText: 'Your name',
+                            prefixIcon: Icon(Icons.person),
+                            border: OutlineInputBorder(),
                           ),
-                          FilledButton(onPressed: () => vote(candidate), child: const Text('Vote')),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _candidateController,
+                              decoration: const InputDecoration(
+                                labelText: 'Add a candidate',
+                                border: OutlineInputBorder(),
+                              ),
+                              onSubmitted: (_) => _addCandidate(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton.filled(
+                            onPressed: _working ? null : _addCandidate,
+                            icon: const Icon(Icons.add),
+                            tooltip: 'Add candidate',
+                          ),
                         ]),
-                      ),
-                    )),
-              ],
-            ),
+                        const SizedBox(height: 8),
+                        if (candidates.isEmpty)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text('No candidates yet. Add one above.'),
+                            ),
+                          ),
+                        ...candidates.map((candidate) => Card(
+                              child: ListTile(
+                                leading: const Icon(Icons.how_to_vote),
+                                title: Text(candidate.name),
+                                subtitle: Text(
+                                  '${candidate.votes} ${candidate.votes == 1 ? 'vote' : 'votes'}',
+                                ),
+                                trailing: Wrap(spacing: 4, children: [
+                                  IconButton(
+                                    onPressed: () => _removeCandidate(candidate),
+                                    icon: const Icon(Icons.delete_outline),
+                                    tooltip: 'Delete candidate',
+                                  ),
+                                  FilledButton(
+                                    onPressed: _working ? null : () => _vote(candidate),
+                                    child: const Text('Vote'),
+                                  ),
+                                ]),
+                              ),
+                            )),
+                      ],
+                    ),
+        );
+      },
     );
   }
 }
@@ -195,15 +196,15 @@ class KigaliWeatherCard extends StatefulWidget {
 }
 
 class _KigaliWeatherCardState extends State<KigaliWeatherCard> {
-  late Future<Weather> weather;
+  late Future<Weather> _weather;
 
   @override
   void initState() {
     super.initState();
-    weather = fetchKigaliWeather();
+    _weather = fetchKigaliWeather();
   }
 
-  void retry() => setState(() => weather = fetchKigaliWeather());
+  void _retry() => setState(() => _weather = fetchKigaliWeather());
 
   @override
   Widget build(BuildContext context) {
@@ -212,7 +213,7 @@ class _KigaliWeatherCardState extends State<KigaliWeatherCard> {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: FutureBuilder<Weather>(
-          future: weather,
+          future: _weather,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Row(children: [
@@ -221,20 +222,23 @@ class _KigaliWeatherCardState extends State<KigaliWeatherCard> {
                 Text('Loading Kigali weather…'),
               ]);
             }
-            if (snapshot.hasError) {
+            if (snapshot.hasError || snapshot.data == null) {
               return Row(children: [
                 const Expanded(child: Text('Could not load Kigali weather. Check your internet.')),
-                TextButton(onPressed: retry, child: const Text('Retry')),
+                TextButton(onPressed: _retry, child: const Text('Retry')),
               ]);
             }
             final current = snapshot.data!;
             return Row(children: [
               const Icon(Icons.wb_cloudy_outlined, size: 32),
               const SizedBox(width: 12),
-              Expanded(child: Text(
-                'Kigali weather  ·  ${current.temperature.round()}°C\n${current.description}, humidity ${current.humidity}%',
-              )),
-              IconButton(onPressed: retry, icon: const Icon(Icons.refresh), tooltip: 'Refresh weather'),
+              Expanded(
+                child: Text(
+                  'Kigali weather · ${current.temperature.round()}°C\n'
+                  '${current.description}, humidity ${current.humidity}%',
+                ),
+              ),
+              IconButton(onPressed: _retry, icon: const Icon(Icons.refresh), tooltip: 'Refresh weather'),
             ]);
           },
         ),

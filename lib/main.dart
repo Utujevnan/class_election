@@ -1,7 +1,11 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'screens/vote_screen.dart';
 
-void main() {
+import 'auth_gate.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const ClassElectionApp());
 }
 
@@ -17,7 +21,7 @@ class ClassElectionApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const VoteScreen(),
+      home: const AuthGate(),
     );
   }
 }
