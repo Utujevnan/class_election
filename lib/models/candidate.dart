@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 class Candidate {
   Candidate({this.id = '', required this.name, this.votes = 0});
@@ -21,19 +20,11 @@ class Candidate {
 }
 
 CollectionReference<Map<String, dynamic>> myCandidates() {
-  final uid = FirebaseAuth.instance.currentUser!.uid;
-  return FirebaseFirestore.instance
-      .collection('users')
-      .doc(uid)
-      .collection('candidates');
+  return FirebaseFirestore.instance.collection('candidates');
 }
 
 CollectionReference<Map<String, dynamic>> myVoters() {
-  final uid = FirebaseAuth.instance.currentUser!.uid;
-  return FirebaseFirestore.instance
-      .collection('users')
-      .doc(uid)
-      .collection('voters');
+  return FirebaseFirestore.instance.collection('voters');
 }
 
 Future<void> addSampleCandidates() async {

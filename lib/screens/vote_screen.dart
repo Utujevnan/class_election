@@ -18,6 +18,7 @@ class _VoteScreenState extends State<VoteScreen> {
   final _voterController = TextEditingController();
   final _candidateController = TextEditingController();
   bool _working = false;
+  int _candidateStreamVersion = 0;
 
   void _message(String message) {
     ScaffoldMessenger.of(context)
@@ -26,22 +27,22 @@ class _VoteScreenState extends State<VoteScreen> {
   }
 
   Future<void> _vote(Candidate candidate) async {
-    final voter = cleanName(_voterController.text);
-    if (voter.isEmpty) {
-      _message('Please type your name before voting.');
-      return;
-    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final voter = cleanName(_voterController.text).isEmpty
+        ? (user.email ?? 'Your account')
+        : cleanName(_voterController.text);
 
     setState(() => _working = true);
     try {
       await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final voterRef = myVoters().doc(voter.toLowerCase());
+        final voterRef = myVoters().doc(user.uid);
         final candidateRef = myCandidates().doc(candidate.id);
         final voterSnapshot = await transaction.get(voterRef);
         if (voterSnapshot.exists) throw StateError('already-voted');
         final candidateSnapshot = await transaction.get(candidateRef);
         final votes = (candidateSnapshot.data()?['votes'] as num?)?.toInt() ?? 0;
-        transaction.set(voterRef, {'name': voter});
+        transaction.set(voterRef, {'name': voter, 'candidateId': candidate.id});
         transaction.update(candidateRef, {'votes': votes + 1});
       });
       _voterController.clear();
@@ -77,6 +78,34 @@ class _VoteScreenState extends State<VoteScreen> {
     }
   }
 
+  Future<void> _editCandidate(Candidate candidate) async {
+    final controller = TextEditingController(text: candidate.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit candidate'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Candidate name'),
+          onSubmitted: (value) => Navigator.pop(context, cleanName(value)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, cleanName(controller.text)), child: const Text('Save')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || name == candidate.name) return;
+    try {
+      await myCandidates().doc(candidate.id).update({'name': name});
+    } catch (_) {
+      _message('Could not edit the candidate. Please try again.');
+    }
+  }
+
   void _openResults(List<Candidate> candidates) {
     Navigator.push(
       context,
@@ -94,6 +123,7 @@ class _VoteScreenState extends State<VoteScreen> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      key: ValueKey(_candidateStreamVersion),
       stream: myCandidates().snapshots(),
       builder: (context, snapshot) {
         final candidates = snapshot.data?.docs
@@ -117,7 +147,7 @@ class _VoteScreenState extends State<VoteScreen> {
             ],
           ),
           body: snapshot.hasError
-              ? const Center(child: Text('Could not load candidates. Check your connection.'))
+              ? _candidateLoadError(snapshot.error)
               : snapshot.connectionState == ConnectionState.waiting
                   ? const Center(child: CircularProgressIndicator())
                   : ListView(
@@ -128,7 +158,8 @@ class _VoteScreenState extends State<VoteScreen> {
                         TextField(
                           controller: _voterController,
                           decoration: const InputDecoration(
-                            labelText: 'Your name',
+                            labelText: 'Your name (optional)',
+                            helperText: 'One vote per signed-in account',
                             prefixIcon: Icon(Icons.person),
                             border: OutlineInputBorder(),
                           ),
@@ -169,6 +200,11 @@ class _VoteScreenState extends State<VoteScreen> {
                                 ),
                                 trailing: Wrap(spacing: 4, children: [
                                   IconButton(
+                                    onPressed: () => _editCandidate(candidate),
+                                    icon: const Icon(Icons.edit_outlined),
+                                    tooltip: 'Edit candidate',
+                                  ),
+                                  IconButton(
                                     onPressed: () => _removeCandidate(candidate),
                                     icon: const Icon(Icons.delete_outline),
                                     tooltip: 'Delete candidate',
@@ -184,6 +220,33 @@ class _VoteScreenState extends State<VoteScreen> {
                     ),
         );
       },
+    );
+  }
+
+  Widget _candidateLoadError(Object? error) {
+    final details = error is FirebaseException
+        ? '${error.code}: ${error.message ?? 'No additional details.'}'
+        : '$error';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 40),
+            const SizedBox(height: 12),
+            const Text('Could not load candidates'),
+            const SizedBox(height: 8),
+            Text(details, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _candidateStreamVersion++),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
