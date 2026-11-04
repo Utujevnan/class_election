@@ -1,8 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../repositories/election_repository.dart';
+import '../state/election_state.dart';
 import 'login_screen.dart';
-import 'screens/vote_screen.dart';
+import 'vote_screen.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
@@ -17,10 +20,14 @@ class AuthGate extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (snapshot.data == null) {
+        final user = snapshot.data;
+        if (user == null) {
           return const LoginScreen();
         }
-        return const VoteScreen();
+        return ChangeNotifierProvider<ElectionState>(
+          create: (_) => ElectionState(ElectionRepository(user.uid)),
+          child: const VoteScreen(),
+        );
       },
     );
   }

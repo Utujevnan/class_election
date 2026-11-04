@@ -18,19 +18,3 @@ class Candidate {
     );
   }
 }
-
-CollectionReference<Map<String, dynamic>> myCandidates() {
-  return FirebaseFirestore.instance.collection('candidates');
-}
-
-CollectionReference<Map<String, dynamic>> myVoters() {
-  return FirebaseFirestore.instance.collection('voters');
-}
-
-Future<void> addSampleCandidates() async {
-  final batch = FirebaseFirestore.instance.batch();
-  for (final name in ['Keza', 'Mutoni', 'Jean']) {
-    batch.set(myCandidates().doc(), Candidate(name: name).toMap());
-  }
-  await batch.commit();
-}
